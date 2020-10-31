@@ -1,0 +1,142 @@
+<?php
+
+use luffyzhao\db\Db;
+
+require __DIR__ . '/vendor/autoload.php';
+
+
+/**
+ * 测试读写分离和分布式
+ * 'driver' => 'mysql',
+ * 'url' => null,
+ * 'host' => '172.27.0.11',
+ * 'port' => 3306,
+ * 'database' => 'hnwms',
+ * 'username' => 'root',
+ * 'password' => 'qywms#2018#ok',
+ * 'unix_socket' => '',
+ * 'charset' => 'utf8mb4',
+ * 'collation' => 'utf8mb4_unicode_ci',
+ * 'prefix' => '',
+ * 'prefix_indexes' => true,
+ * 'strict' => true,
+ */
+$database = [
+    // 数据库类型
+    'type' => 'mysql',
+    // 服务器地址
+    'hostname' => '******',
+    // 数据库名
+    'database' => '******',
+    // 用户名
+    'username' => '******',
+    // 密码
+    'password' => '******',
+    // 端口
+    'hostport' => '******',
+    // 分布式
+    'deploy' => 0,
+    // 读写分享
+    'rw_separate' => false,
+    // 调试
+    'debug' => function ($messgaes) {
+        echo "[" . date('Y-m-d H:i:s') . "]" . $messgaes . "\n";
+    },
+];
+$db = new Db($database);
+
+$orders = ['SOC03910000446','SOC03910000447','SOC03910000448','SOC03910000449','SOC03910000450','SOC03910000451','SOC03910000452','SOC03910000453','SOC03910000454','SOC03910000455','SOC03910000456','SOC03910000457','SOC03910000458','SOC03910000459','SOC03910000460','SOC03910000461','SOC03910000462','SOC03910000463','SOC03910000464','SOC03910000465','SOC03910000466','SOC03910000467','SOC03910000468','SOC03910000469','SOC03910000470','SOC03910000471','SOC03910000472','SOC03910000473','SOC03910000474','SOC03910000475','SOC03910000476','SOC03910000477','SOC03910000478','SOC03910000479','SOC03910000480','SOC03910000481','SOC03910000482','SOC03910000483','SOC03910000484','SOC03910000485','SOC03910000486','SOC03910000487','SOC03910000488','SOC03910000489','SOC03910000490','SOC03910000491','SOC03910000492','SOC03910000493','SOC03910000494','SOC03910000495','SOC03910000496','SOC03910000497','SOC03910000498','SOC03910000499','SOC03910000500','SOC03910000501','SOC03910000502','SOC03910000503','SOC03910000504','SOC03910000505'];
+// 没有数据
+$orders = $db->table('orders')->where('order_code', 'in', $orders)->findAll();
+
+$tools = new \YunDaCustoms\Tools();
+
+$ship_lists = [];
+
+foreach ($orders as $order) {
+    $customerAddress = $db->table('customer_label_address')
+        ->where('customer_code', '=', $order['customer_code'])->findAll()[0];
+    $address = $db->table('order_address_book')->where('order_code', '=', $order['order_code'])->findAll()[0];
+    $buyer = $db->table('order_buyer')->where('order_code', '=', $order['order_code'])->findAll()[0];
+
+    $products = $db->table('order_product')->where('order_code', '=', $order['order_code'])->findAll();
+
+    $sender = new \YunDaCustoms\Info\Sender();
+    $sender->sender_address = $customerAddress['address'];
+    $sender->sender_city = $customerAddress['city'];
+    $sender->sender_name = $customerAddress['contacter'];
+    $sender->sender_tel = $customerAddress['telphone'];
+    $sender->sd_city_code = $tools->cityTransform($customerAddress['state']);
+
+    $receiver = new \YunDaCustoms\Info\Receiver();
+    $receiver->receiver_address = $address['oab_street_address1'] . $address['oab_street_address2'];
+    $receiver->receiver_area = $address['oab_district'];
+    $receiver->receiver_province = $address['oab_state'];
+    $receiver->receiver_city = $address['oab_city'];
+    $receiver->re_city_code = $tools->cityTransform($address['oab_state']);
+    $receiver->receiver_name = $address['oab_firstname'] . $address['oab_lastname'];
+    $receiver->receiver_tel = $address['oab_phone'];
+    $receiver->re_card_type = 1;
+    $receiver->re_card_no = $buyer['buyer_id_no'];
+
+    $items = [];
+
+    $total_weight=0;
+    foreach ($products as $orderProduct) {
+        $product = $db->table('product')->where('product_id', '=', $orderProduct['product_id'])->findAll();
+        $item = new \YunDaCustoms\Info\Item();
+        $item->product_code = $product[0]['hs_code'];
+        $item->product_name = $product[0]['product_title'];
+        $item->product_qutity = $orderProduct['op_quantity'];
+        $item->product_price = $orderProduct['op_price'];
+        $items[] = $item;
+        $total_weight+=$product[0]['product_weight'] * $orderProduct['op_quantity'];
+    }
+
+    $ship = new \YunDaCustoms\Info\Ship();
+    $ship->receiver = $receiver;
+    $ship->sender = $sender;
+    $ship->items = $items;
+    $ship->client_ship = $order['ref_tracking_number'];
+    $ship->goods_name = strip_tags($order['parcel_contents']);
+    $ship->total_count = $order['parcel_quantity'];
+    $ship->total_weight = $total_weight;
+    $ship->total_fees = 0;
+    $ship->order_list = $order['reference_no'];
+
+    $ship->ec_reg_cid = $order['ebc_code'];
+    $ship->ec_reg_cname = $order['ebc_name'];
+    $ship->ebp_ciq_code = $order['ebp_code'];
+    $ship->ebp_ciq_name = $order['ebp_name'];
+
+
+    $ship_lists[] = $ship;
+}
+
+$body = new \YunDaCustoms\Info\Body();
+
+$body->ship_lists = $ship_lists;
+$body->customs_id = 4921;
+$body->logistics_id = 'W00001';
+$body->ec_id = '';
+$body->source_flag = '4104003779';
+
+$header = new \YunDaCustoms\Info\Header();
+$header->buztype = 'clientShip';
+$header->version = '1.0';
+
+$info = new \YunDaCustoms\Info();
+$info->header = $header;
+$info->body = $body;
+
+$client = new \YunDaCustoms\Client();
+$client->setAccountNo('4104003779');
+$client->setPassword('CB45F9F2D0F8A73C0439708D8A2764FD');
+$client->setData($info->__toString());
+
+$response = $client->handle();
+echo $response->getBody()->getContents();
+
+
+
+
