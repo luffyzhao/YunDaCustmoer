@@ -8,7 +8,6 @@
     ],
     "require": {
         "ext-mbstring": "*",
-        "luffyzhao/luffy-db": "^1.1",
         "guzzlehttp/guzzle": "~6.0"
     },
     "autoload": {
